@@ -136,9 +136,37 @@ export async function inspectApiSession(
   }
 }
 
+/**
+ * How long a terminal resume failure is replayed to callers instead of re-attempted.
+ *
+ * Every attempt composes the Agent preset before resuming it (`resumeObserved` awaits
+ * `composeAgent` prior to `agents.resume`), so a Session whose preset cannot mount fails
+ * expensively — and a browser client retries a failed request without backoff. Measured on a
+ * live instance, one stuck Session produced 80 `commands/list` requests per second, each
+ * paying a full composition (0.47 s CPU with a heavy preset, 56 ms with a light one), which
+ * pinned an otherwise idle process at 102.5% of a core for 13 minutes (the healthy baseline
+ * for that unit is 0.9–4.3%) while its log stayed completely empty.
+ *
+ * Replaying the recorded outcome for one second bounds a retry loop to a single real attempt
+ * per second while still letting a client recover on its own: as soon as the underlying
+ * condition clears, the first attempt past the window succeeds and drops the record.
+ */
+const RESUME_FAILURE_COOLDOWN_MS = 1000
+
+/** A terminal resume failure replayed to the callers that retry inside the cooldown. */
+interface ResumeFailure {
+  /** Message reported to every caller served from this record. */
+  message: string
+  /** Epoch milliseconds of the attempt that produced this record. */
+  at: number
+  /** Attempts served from this record instead of re-composing the preset. */
+  suppressed: number
+}
+
 /** Owns every operation that may create, resume, or configure a Web Agent. */
 export class ApiSessionAgentController {
   private readonly resumes = new Map<SessionId, Promise<Agent>>()
+  private readonly resumeFailures = new Map<SessionId, ResumeFailure>()
   private readonly creations = new Map<SessionId, Promise<Agent>>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
@@ -190,6 +218,14 @@ export class ApiSessionAgentController {
     if (attached !== undefined && hasApiSessionSubagentOwner(this.ctx, attached, undefined)) {
       return { error: apiSessionSubagentOwnershipError(sessionId) }
     }
+    // Replay a recent terminal failure instead of composing the preset again (see
+    // RESUME_FAILURE_COOLDOWN_MS). Cheap domain failures — not-found, ownership — are raised
+    // above or below this point and stay live, so they can clear as soon as they should.
+    const recentFailure = this.resumeFailures.get(sessionId)
+    if (recentFailure !== undefined && Date.now() - recentFailure.at < RESUME_FAILURE_COOLDOWN_MS) {
+      recentFailure.suppressed += 1
+      return { error: new RemoteError('gateway/internal', recentFailure.message, {}) }
+    }
 
     let resume = this.resumes.get(sessionId)
     if (resume === undefined) {
@@ -197,7 +233,9 @@ export class ApiSessionAgentController {
       this.resumes.set(sessionId, resume)
     }
     try {
-      return { agent: await resume }
+      const agent = await resume
+      this.resumeFailures.delete(sessionId)
+      return { agent }
     } catch (error: unknown) {
       if (error instanceof ApiSessionNotFound) {
         return { error: new RemoteError('session/not-found', error.message, { sessionId }) }
@@ -211,13 +249,17 @@ export class ApiSessionAgentController {
       if (racedSession !== undefined && hasApiSessionSubagentOwner(this.ctx, racedSession, undefined)) {
         return { error: apiSessionSubagentOwnershipError(sessionId) }
       }
-      return {
-        error: new RemoteError(
-          'gateway/internal',
-          `resume failed for session "${sessionId}": ${String(error)}`,
-          {},
-        ),
-      }
+      const message = `resume failed for session "${sessionId}": ${String(error)}`
+      const previous = this.resumeFailures.get(sessionId)
+      this.resumeFailures.set(sessionId, { message, at: Date.now(), suppressed: 0 })
+      // A failure that repeats forever must be named once, not per request: the first attempt
+      // reports the cause here, the retries served from the record only count themselves and
+      // are folded into the report of the next real attempt.
+      this.ctx.logger.warn(
+        `session-controller: ${message}`
+        + (previous === undefined ? '' : ` (${previous.suppressed} retried inside the previous cooldown)`),
+      )
+      return { error: new RemoteError('gateway/internal', message, {}) }
     }
   }
 

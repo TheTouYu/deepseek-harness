@@ -237,6 +237,45 @@ describe('ApiSession Agent lookup and recovery', () => {
     })
   })
 
+  it('replays a terminal resume failure inside the cooldown instead of re-composing the preset', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const failed = await harness()
+      const meta = header('cooldown')
+      providePersistence(failed.ctx, {
+        list: () => Promise.resolve([meta]),
+        inspect: () => Promise.resolve({ meta, events: [] }),
+      })
+      const resume = vi.spyOn(failed.ctx.agents, 'resume').mockRejectedValue(new Error('factory unavailable'))
+      const warn = vi.spyOn(failed.ctx.logger, 'warn').mockImplementation(() => {})
+
+      const first = await failed.agents.resolveAgent(meta.id)
+      const replayed = await failed.agents.resolveAgent(meta.id)
+
+      // One real attempt: every retry inside the window is served from the recorded outcome,
+      // because each attempt would otherwise compose the Agent preset again.
+      expect(resume).toHaveBeenCalledTimes(1)
+      expect(first).toMatchObject({
+        error: { code: 'gateway/internal', message: expect.stringContaining('factory unavailable') as string },
+      })
+      expect(replayed).toEqual(first)
+      // The failure is named once for the whole window, however hard the caller retries.
+      expect(warn).toHaveBeenCalledTimes(1)
+
+      now += 1_001 // just past the documented one-second cooldown
+      const retried = await failed.agents.resolveAgent(meta.id)
+
+      expect(resume).toHaveBeenCalledTimes(2)
+      expect(retried).toMatchObject({ error: { code: 'gateway/internal' } })
+      expect(warn).toHaveBeenCalledTimes(2)
+      // Replays are counted, not printed per request, and folded into the next real attempt.
+      expect(warn.mock.calls[1]?.[0]).toContain('1 retried inside the previous cooldown')
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   it('requires projected observations before activation', async () => {
     const { agents } = await harness()
     const meta = header('unprojected-observation')
