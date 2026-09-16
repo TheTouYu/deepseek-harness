@@ -59,9 +59,59 @@ done
 4. unit 备份：`~/.config/systemd/user/dsh-web.service.bak-20260914-patchwiring`（首次接线）、
    `.bak-20260914-patchhome`（从 routing-suite 搬出）、`.bak-20260914-patchfork`（搬到本 fork）。
 
+## 巡检记录
+
+**2026-09-14（升级判定）：本机无可升级目标。**
+
+- `npm view @deepseek-ai/dsh dist-tags` → `next=0.1.5-rc.2`（= 本机已装）、
+  `latest=0.1.5-rc.1` —— **`latest` 比 `next` 旧，按 `latest` 装等于降级**（这条每次都值得重看一眼）。
+- `git fetch origin master` → `origin/master = c291e7961a`（`release-0.1.5-sync-master`，**未前进**）；
+  本地 `master = a0d0dfff35` = 上游 + 本提交（补丁脚本与本文档）。
+- 四个补丁器 `--check` **全部 exit=0**；宿主 `dsh-web.service` 的 `ExecStartPre` **4 条在位**，
+  `ActiveState=active`。
+
+**⚠️ 生效范围（内存 vs 磁盘）**：补丁 4 落盘 `20:31:11`，宿主 3100 进程起于 `16:49:32`
+⇒ **运行中的宿主内存里仍是未打补丁的旧代码**，下次 `systemctl --user restart dsh-web.service`
+才生效（重启前该实例遇预设挂载失败仍会 resume 风暴）。沙箱 3102 / 3105 / 3106 / 3109 都是
+补丁之后启动的，均已含补丁。
+
+**判据（方向别写反）**：`stat -c %Y /proc/<pid>`（进程创建时刻）与目标文件 mtime 比大小 ——
+**进程晚于补丁 = 内存含补丁**。2026-09-14 我把这个判据写反过一次，整列输出全反，
+差点得出"宿主已含补丁"的相反结论。
+
+**2026-09-16（升级判定）：出现可升级目标 `0.1.6-alpha.1`，但仍不能装。**
+
+- `npm` dist-tags → `alpha=0.1.6-alpha.1`、`next=0.1.5-rc.2`（= 本机已装）、`latest=0.1.5-rc.1`
+  —— **latest 依旧比 next 旧**，装必须点名 `@0.1.6-alpha.1`。
+- `git fetch origin master` → `origin/master = 0d1f50007f`（**前进了 666 提交**），新 tag
+  `dsh-v0.1.6-alpha.1 = 0a15e36e7f`（2026-09-15）。engines / packageManager / 会话格式代际均未变。
+- **四个补丁器已在 0.1.6-alpha.1 上干跑通过**（假 HOME，不碰全局安装）：pre-check 全 MISSING、
+  apply 全 0、post-check 全 0、`node --check` 全通过；上游**没有**自行修复其中任何一个。
+  干跑另暴露两处 0.1.6 新路径未覆盖：`/v1/messages` 端点（补丁 1）与 messages transport 的
+  401/403 分类器（补丁 2）。
+- **装不了的硬阻塞**：`billion-context-dsh` 的 peerDependencies 把 5 个 dsh 包封顶在 `<0.1.6-0`
+  （远端 v0.2.23 仍如此）；另 memo-river 预设第 285–288 行挂了 0.1.6 已删的
+  `@deepseek-ai/dsh-workflow-worker-thread`（替代品 `dsh-workflow-ptc`）。
+- 完整盘点、阻塞细节与执行清单：`.upgrade/UPGRADE-NOTES-20260916.md`。
+- 全局安装**未改动**（仍 0.1.5-rc.2，四补丁 `--check` 全绿）。
+
+**2026-09-16（升级判定）：官方出了 `dsh-v0.1.6-alpha.1`，本机决定暂不升级。**
+
+- 新 tag `dsh-v0.1.6-alpha.1`（`0a15e36e7f`，2026-09-15）已出现，`origin/master` 前进到 `0d1f50007f`
+  （比本机基线 `c291e7961a` 多 666 提交）；npm 上它挂在 **`alpha`** 标签（`latest` 仍比 `next` 旧，这一条每次都要重看）。
+- **四个补丁器已用假 HOME 干跑过 0.1.6-alpha.1**：pre-check 四个全 MISSING，apply + post-check 四个全 exit=0
+  ⇒ 补丁在新版本上**依然可用**，且上游一个都没自行修复。
+- **干跑暴露两个覆盖缺口**（0.1.6 起 DeepSeek 默认改用 Messages 协议，而本机默认 provider 就是内置
+  `deepseek-official` ⇒ 这两条缺口直接落在**主路径**上）：补丁 1 未覆盖 `/v1/messages` 端点；
+  补丁 2 未覆盖 `protocols/messages/transport.ts` 的 401/403 分类器。
+- 升级还牵动另外 4 项本机自有组件（memo-river 的 `agent/session-start` 事件在 0.1.6 被删、
+  preset-composer 能力目录、ACP 插件 peer 上限、memo-river 预设）——完整清单与判据见
+  `.upgrade/UPGRADE-NOTES-20260916.md`。
+- **判定：等官方出更稳定的版本再升。**
+
 ## 与本仓库上游的关系
 
-本分支（`master`）比 `origin/master`（官方）**多一个提交**：就是这些补丁脚本与本文档。
+本分支（`master`）比 `origin/master`（官方）多的是**本地提交**：这些补丁脚本与本文档。
 要与官方同步时：
 
 ```bash
