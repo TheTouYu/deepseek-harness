@@ -23,6 +23,12 @@
  * TRANSPORT。表现：每次模型**开始调用工具**就报错（与思考时长无关，与上下文无关），
  * 日志里能看到 `ReferenceError: brandString is not defined`。v3 把 import 补回来。
  *
+ * 锚点适配（2026-09-25，dsh 0.1.7-rc.2）：rc.2 删掉了 Chat Completions 端点，唯一出站
+ * fetch 变成 `${messagesApiRoot(baseURL)}/messages`，import 头里的 brandString 也换成
+ * getOrCreateAnonymousUserId。锚点因此改为**多版本变体**：老变体原样保留（live 0.1.5-rc.2
+ * 与本机 0.1.6 重装后仍能重打），新增 rc.2 变体覆盖这个新的唯一调用点。注入文本与
+ * helper 未变，MARKER 仍是 v3。
+ *
  * 幂等：目标文件已含补丁标记（v3）则直接退出（0）；检测到 v1/v2 产物则按 REPAIRS
  * 清单就地补齐（缺 brandString import / agent: false / connecting 守卫），marker 归一为
  * v3；dsh 升级覆盖 node_modules 后，下次运行本脚本会自动重打。接入 dsh-web.service 的
@@ -72,15 +78,12 @@ const REPAIRS = [
   }
 ]
 
-/** 三处精确替换：old 在未补丁文件里各自唯一。 */
-const EDITS = [
-  {
-    old: 'import { EventSourceParserStream } from "eventsource-parser/stream";\nimport { brandString } from "@deepseek-ai/dsh-brand";',
-    new: `import { EventSourceParserStream } from "eventsource-parser/stream";
-import { brandString } from "@deepseek-ai/dsh-brand";
-import { request as httpsRequest } from "node:https";
-import { Readable } from "node:stream";
-// ponytail: keep-alive pool reuse fix. v3. The undici global fetch pool can keep
+/**
+ * 注入文本拆两段：`IMPORT_TAIL` + `FRESH_FETCH_HELPER`，两个 import 变体共用尾部。
+ * ≤0.1.6 变体的产物必须与历史补丁逐字节一致（live 0.1.5-rc.2 已打过，只有重装才重跑）。
+ */
+const IMPORT_TAIL = 'import { request as httpsRequest } from "node:https";\nimport { Readable } from "node:stream";\n'
+const FRESH_FETCH_HELPER = `// ponytail: keep-alive pool reuse fix. v3. The undici global fetch pool can keep
 // half-dead sockets across a network blip; every retry then reuses the dead
 // socket and hangs until the idle watchdog fires, forever. Each DeepSeek
 // request therefore opens a fresh connection (agent: false, connect timeout
@@ -137,16 +140,67 @@ function freshConnectionFetch(url, init = {}) {
 \t});
 }
 `
+
+/** 「保留原 import 头，追加 IMPORT_TAIL + helper」——两个版本变体共用注入正文。 */
+function injectAfter(head) {
+  return { old: head, new: `${head}\n${IMPORT_TAIL}${FRESH_FETCH_HELPER}` }
+}
+
+/**
+ * 版本变体锚点（2026-09-25 增补 0.1.7-rc.2）。每个 edit 的 variants 里，
+ * **恰好一个变体必须在文件里恰好命中一次**：0 命中 = 上游布局变了（fail，阻止启动），
+ * 2 命中 = 只会改一处、留下半补丁（同样 fail）。老变体一律保留，live 0.1.5-rc.2
+ * 与本机 0.1.6 仍可重打。
+ *
+ * rc.2 的差异（已核对 pristine 产物）：
+ * - import 头：`brandString` 整包消失，改为 next 行的 `getOrCreateAnonymousUserId`；
+ * - 出站调用点：Chat Completions 端点被删除（`chat/completions` 全产物 0 命中），
+ *   唯一 fetch 变成 `${messagesApiRoot(connection.baseURL)}/messages`。
+ */
+const EDITS = [
+  {
+    what: 'import 头 + freshConnectionFetch 注入',
+    variants: [
+      injectAfter('import { EventSourceParserStream } from "eventsource-parser/stream";\nimport { brandString } from "@deepseek-ai/dsh-brand";'),
+      injectAfter('import { EventSourceParserStream } from "eventsource-parser/stream";\nimport { getOrCreateAnonymousUserId } from "@deepseek-ai/dsh-anonymous-user-id";')
+    ]
   },
   {
-    old: 'this.fetchImpl = options.fetch ?? globalThis.fetch;',
-    new: 'this.fetchImpl = options.fetch ?? freshConnectionFetch;'
+    what: 'fetchImpl → freshConnectionFetch',
+    variants: [
+      { old: 'this.fetchImpl = options.fetch ?? globalThis.fetch;', new: 'this.fetchImpl = options.fetch ?? freshConnectionFetch;' }
+    ]
   },
   {
-    old: 'response = await fetch(`${connection.baseURL}/chat/completions`, {',
-    new: 'response = await freshConnectionFetch(`${connection.baseURL}/chat/completions`, {'
+    what: '出站 fetch 调用点 → freshConnectionFetch',
+    variants: [
+      {
+        old: 'response = await fetch(`${connection.baseURL}/chat/completions`, {',
+        new: 'response = await freshConnectionFetch(`${connection.baseURL}/chat/completions`, {'
+      },
+      {
+        old: 'response = await fetch(`${messagesApiRoot(connection.baseURL)}/messages`, {',
+        new: 'response = await freshConnectionFetch(`${messagesApiRoot(connection.baseURL)}/messages`, {'
+      }
+    ]
   }
 ]
+
+/**
+ * 选出该 edit 在本文件里唯一命中的变体。
+ * @param content - 待补丁的产物全文。
+ * @param edit - `{ what, variants }`。
+ * @returns 命中的 `{ old, new }`。
+ */
+function pickVariant(content, edit) {
+  const hits = edit.variants.map((v) => ({ v, n: content.split(v.old).length - 1 }))
+  const matched = hits.filter((h) => h.n > 0)
+  if (matched.length !== 1 || matched[0].n !== 1) {
+    const detail = hits.map((h) => `${h.n}× ${JSON.stringify(h.v.old.slice(0, 70))}`).join(' | ')
+    fail(`anchor not unique (found ${matched.length === 1 ? matched[0].n : 0}) for [${edit.what}] — variant hits: ${detail} — dsh may have changed layout; review and update this script`)
+  }
+  return matched[0].v
+}
 
 function fail(msg) {
   console.error(`ensure-connstuck-patch: ${msg}`)
@@ -193,13 +247,10 @@ if (checkOnly) {
   process.exit(1)
 }
 
-// 应用前先验证每个 old 都唯一存在，避免升级改版后误伤。
-for (const e of EDITS) {
-  const n = content.split(e.old).length - 1
-  if (n !== 1) fail(`anchor not unique (found ${n}): ${e.old.slice(0, 60)}... — dsh may have changed layout; review and update this script`)
-}
-for (const e of EDITS) content = content.replace(e.old, e.new)
-writePatched(content, 'patched')
+// 应用前先为每个 edit 选出唯一命中的版本变体；全部选完再落盘，避免半补丁。
+const chosen = EDITS.map((e) => ({ e, v: pickVariant(content, e) }))
+for (const { v } of chosen) content = content.replace(v.old, v.new)
+writePatched(content, `patched (${chosen.map(({ e }) => e.what).join('; ')})`)
 
 /** 备份 + 写入 + 语法校验（失败回滚到备份）。 */
 function writePatched(next, label) {
