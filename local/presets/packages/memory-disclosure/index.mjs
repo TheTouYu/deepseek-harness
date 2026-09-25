@@ -60,6 +60,9 @@ function message(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'memory-disclosure', form: 'disclosure' },
+    // 0.1.7 起 source.kind 必须是产出方自有的非空字符串：通用包装 `kind: 'plugin'`
+    // 会被 assertV4SourceRowAdmission 直接拒绝（dsh-session-format-v3-to-v4/src/
+    // message-sources.ts:10）。官方同款见 dsh-agent-instructions。
+    source: { kind: 'memory-disclosure', form: 'disclosure' },
   }
 }

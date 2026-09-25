@@ -1,0 +1,31 @@
+# 上下文插件的核验预设（按 0.1.7 的 bundle 声明格式）。
+#
+# 目的：在「零自定义插件」的 prod 基线上，**只**挂上下文类插件，以便单独核验，
+# 不把 ③发送消息 / ④预设开发 的插件一并带进来。
+#
+# 挂载的两个插件：
+#   · @local/dsh-memory-disclosure —— 记忆河流的能力说明注入器（用户发出第一条消息后注入一次）
+#   · @local/dsh-ctxinject         —— 上下文注入 + 条件触发（外部条件 → 上下文/动作）
+#
+# 两者原先都写 `source: { kind: 'plugin', ... }`，0.1.7 的 assertV4SourceRowAdmission 会直接拒绝
+# （dsh-session-format-v3-to-v4/src/message-sources.ts:10），已改为产出方自有的 kind。
+
+- insert:
+    - id: preset-ctx
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: ctx
+        name: "上下文核验"
+        description: "只挂上下文类插件：memory-disclosure + ctxinject"
+        plugins:
+          # ctxinject 在 isolate 的 entry-local realm 里跑（沿用其原预设的形态）
+          - id: ctxinject
+            name: cordis:group
+            group: true
+            isolate:
+              ctxinject: true
+            config:
+              - id: ctxinject-plugin
+                name: '@local/dsh-ctxinject'
+          - id: memory-disclosure
+            name: '@local/dsh-memory-disclosure'
