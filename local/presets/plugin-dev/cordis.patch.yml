@@ -1,0 +1,103 @@
+# 由 local/patches 之外的迁移工具生成：旧目录预设 plugin-dev → bundle 声明。
+# 生成源：$DSH_HOME/.agent-presets/plugin-dev/（preset.yml + agent.cordis.yml）
+# 依据：dsh-v0.1.7-rc.2 packages/preset/agent-preset/skills/editing-cordis-compositions/SKILL.md
+# 改这个文件等于改预设；改完需要重新 install_bundle。
+
+- insert:
+    - id: preset-plugin-dev
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: plugin-dev
+        name: "插件开发专用+记忆"
+        description: "插件开发"
+        plugins:
+        # 由 $DSH_HOME/.agent-presets/plugin-dev/ 迁移而来（旧目录预设 → bundle 声明）。
+        # 迁移时移除了 4 条 @dsh-external/dsh-preset-composer/* 行：该包在 0.1.7 功能性作废，
+        # 其职责由官方 plugin_manager + 创造模式 + editing-cordis-compositions 技能接管。
+        # 手改会在下一次「应用」时被覆盖；要改行为，请回面板改组合规格。
+        # 组合规格的同目录副本：compose.source.json（可回读、可进 git）。
+        # preset: plugin-dev（插件开发专用+记忆）
+        # 能力：base, skills, background-jobs, web, ask-user, present, structure-editor, composer-tools, hotplug, self-inspect, plugin-dev, @dsh-external/dsh-agent-messaging, billion-context-dsh, context-injection, @dsh-external/dsh-memo-tuner
+        # 底座：极简 —— persona 带 complete:true + includeRuntimeContext:false，系统提示只剩你写的那几句（官方身份段、工具指导段、运行时快照都不会进）。
+        # 能力说明：首条消息之后注入一次（预设本地披露器 memory-disclosure.mjs）。
+
+        - id: persona
+          name: '@deepseek-ai/dsh-persona'
+          config:
+            prefix: You are a helpful software engineer assistant.
+            complete: true
+            includeRuntimeContext: false
+        - id: agent-instructions
+          name: '@deepseek-ai/dsh-agent-instructions'
+          config:
+            maxBytes: 65536
+        - id: tool-bash
+          name: '@deepseek-ai/dsh-tool-bash'
+          disabled: !!js process.platform === 'win32'
+        - id: tool-pwsh
+          name: '@deepseek-ai/dsh-tool-pwsh'
+          disabled: !!js process.platform !== 'win32'
+        - id: tool-fs
+          name: '@deepseek-ai/dsh-tool-fs'
+        - id: tool-fs-search
+          name: '@deepseek-ai/dsh-tool-fs-search'
+          config:
+            sampleOverCapGlobResults: false
+        - id: tool-todo
+          name: '@deepseek-ai/dsh-tool-todo'
+          config:
+            allowParallelInProgress: true
+        - id: skill-filesystem
+          name: '@deepseek-ai/dsh-skill-filesystem'
+        - id: tool-skill
+          name: '@deepseek-ai/dsh-tool-skill'
+        - id: memo-river
+          name: cordis:group
+          group: true
+          isolate:
+            memoRiver: true
+          config:
+            - id: memo-river-plugin
+              name: '@local/dsh-memo-river-plugin'
+              config:
+                workspaceScoped: true
+                intervalMs: 900000
+                inject:
+                  gate: true
+                  k: 3
+                  tokenBudget: 3500
+                  mode: topology_v3
+                  gateOnCurrentMessage: true
+        - id: tool-jobs
+          name: '@deepseek-ai/dsh-tool-jobs'
+        - id: tool-web
+          name: '@deepseek-ai/dsh-tool-web'
+          config:
+            fetch: true
+            searchTimeoutMs: 60000
+        - id: tool-ask-user
+          name: '@deepseek-ai/dsh-tool-ask-user'
+        - id: present
+          name: '@deepseek-ai/dsh-tool-present'
+        - id: tool-str-replace-editor
+          name: '@deepseek-ai/dsh-tool-str-replace-editor'
+        - id: plugin-dsh-external-dsh-agent-messaging
+          name: cordis:group
+          group: true
+          isolate:
+            compaction: true
+          config:
+            - id: plugin-entry-dsh-external-dsh-agent-messaging
+              name: '@dsh-external/dsh-agent-messaging'
+        - id: plugin-entry-dsh-external-dsh-memo-tuner
+          name: '@dsh-external/dsh-memo-tuner'
+        - id: plugin-billion-context-dsh
+          name: cordis:group
+          group: true
+          isolate:
+            compaction: true
+          config:
+            - id: plugin-entry-billion-context-dsh
+              name: billion-context-dsh
+        - id: memory-disclosure
+          name: '@local/dsh-memory-disclosure'

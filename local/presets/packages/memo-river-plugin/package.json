@@ -1,0 +1,8 @@
+{
+  "name": "@local/dsh-memo-river-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": { ".": "./index.mjs" }
+}
