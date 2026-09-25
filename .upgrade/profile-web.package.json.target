@@ -1,0 +1,25 @@
+{
+  "name": "dsh-profile-web",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@dsh-external/dsh-agent-messaging": "link:/home/h/app/dsh-agent-messaging",
+    "@dsh-external/dsh-memo-tuner": "link:/home/h/app/dsh-memo-river/panel",
+    "@local/dsh-memo-river-preset": "link:/home/h/app/deepseek-harness/local/presets/memo-river",
+    "@local/dsh-plugin-dev-preset": "link:/home/h/app/deepseek-harness/local/presets/plugin-dev",
+    "@local/dsh-memo-river-plugin": "link:/home/h/app/deepseek-harness/local/presets/packages/memo-river-plugin",
+    "@local/dsh-memory-disclosure": "link:/home/h/app/deepseek-harness/local/presets/packages/memory-disclosure"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@dsh-external/dsh-agent-messaging",
+        "@local/dsh-memo-river-preset",
+        "@local/dsh-plugin-dev-preset",
+        "billion-context-dsh"
+      ]
+    }
+  }
+}
