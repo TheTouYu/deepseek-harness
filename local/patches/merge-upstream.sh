@@ -10,9 +10,14 @@ cd "$REPO" || exit 2
 {
   echo "=== $(date -Is) run start"
   git fetch origin --tags 2>&1 | tail -2
-  # 当前 master 已含的上游最新 tag
-  base_tag=$(git tag --merged master 'dsh-v*' | grep -vE -- '-(rc|alpha|beta)' | sort -V | tail -1)
+  # 当前 master 已含的上游最新 tag；官方至今只发 rc/alpha 预发布——
+  # 优先非预发布 tag，没有则退而取最高 rc（排除 alpha/beta）
+  pick_newest () { grep -vE -- '-(alpha|beta)' | sort -V | tail -1; }
+  merged_all=$(git tag --merged master 'dsh-v*')
+  base_tag=$(echo "$merged_all" | grep -vE -- '-(rc|alpha|beta)' | sort -V | tail -1)
+  [ -n "$base_tag" ] || base_tag=$(echo "$merged_all" | pick_newest)
   newest=$(git tag -l 'dsh-v*' | grep -vE -- '-(rc|alpha|beta)' | sort -V | tail -1)
+  [ -n "$newest" ] || newest=$(git tag -l 'dsh-v*' | pick_newest)
   echo "base_tag=$base_tag newest_stable=$newest"
   if [ "$base_tag" = "$newest" ]; then echo "UP-TO-DATE"; exit 0; fi
   git checkout -q master
