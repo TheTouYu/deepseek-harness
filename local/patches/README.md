@@ -1,4 +1,4 @@
-# local/patches/ —— 本机 dsh 本地补丁器（4 个）
+# local/patches/ —— 本机 dsh 本地补丁器（7 个）
 
 > 这一批补丁原住在 `dsh-routing-suite`（已弃用）。现在**就住在本 fork**（`TheTouYu/deepseek-harness`）的 `local/patches/`，
 > 与官方树同仓、随分支一起推送 —— 不再需要一个单独的补丁仓库。
@@ -18,6 +18,7 @@
 | 2 | `ensure-quotamisclass-patch.mjs` | `dsh-llm-pi-ai` + `dsh-llm-deepseek` | 401/403 一律判 AUTH ⇒ 中转站余额不足（403 insufficient balance / 预扣费 / 剩余额度）被 UI 误报 "API key invalid"。改为只 401 判 AUTH、403 余额类判 QUOTA | `// ponytail: billing/quota 403s` | `.bak-quotafix-*` ×2 |
 | 3 | `ensure-v0-tier-compat-patch.mjs` | `dsh-session-format-v0-to-v1` | v0→v1 迁移器用**冻结的已发布成员清单**严格校验 `compaction/summary`，而本机历史会话由带 ACP（billion-context-dsh）的构建写入、多带 7 个成员（tier/kernelBlockId/topic/parentBlockIds/directMessageIds/effectiveMessageIds/verifiedReadings）⇒ **542 个 v0 会话全部打不开**。必须补进**第二个参数 optional**（第三个 opaque 不授予成员资格；试错产物留作 `.reference-wrong-slot-opaque-*`） | 跑**真校验器探针**，不看 marker | `.bak-v0tier-*` ×2、`.bak-wave2-*` |
 | 4 | `ensure-resume-cooldown-patch.mjs` | `dsh-api-session-controller` | 预设挂载失败 ⇒ 该会话 resume 必失败，而 `resumeObserved` **先 `composeAgent` 再 `agents.resume`**、失败即释放去重槽位 ⇒ 客户端无退避重试的每一次都要重挂整套组合（实测 80 req/s × 0.47s CPU = 空闲实例 **825.1s/805s = 102.5%** 一核 13 分钟，日志零行）。加 `RESUME_FAILURE_COOLDOWN_MS = 1000` 失败闸门 + 失败赋名 | 行为签名 + **真 `import()`** | `.bak-resumecool-*`；原始件 `.bak-20260914-storm`；手工版 `.bak-handpatched-20260914` |
+| 7 | `ensure-tooljsonrepair-patch.mjs` | `dsh-llm-deepseek` | 模型漏转义内层引号（`{"command":"echo "hi""}`）⇒ `content_block_stop` 收口把非法 JSON 交付给工具、`message_stop` 预校验抛 `MALFORMED_RESPONSE` **判死整个 turn**（0.1.5 是容忍原文让模型自纠，属行为回归；宿主全史 39/139,329 ≈ 1/3500）。收口处改调**收窄的错误位置驱动修复器**：只在 V8 报 "Expected ',' or '}' after property value" 时转义候选引号，最多 8 轮，其余一律原样放行交给 retryPolicy | marker + 两个注入点都在位 | `.bak-tooljsonrepair-*` |
 
 ## 接线（`~/.config/systemd/user/dsh-web.service`）
 
@@ -33,7 +34,7 @@ ExecStartPre=/bin/bash -c 'f=/home/h/app/deepseek-harness/local/patches/ensure-c
 巡检（0=健康 / 1=需重打）：
 
 ```bash
-for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown; do
+for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-tooljsonrepair; do
   node /home/h/app/deepseek-harness/local/patches/$s-patch.mjs --check; echo "$s exit=$?"
 done
 ```
@@ -144,3 +145,47 @@ git fetch origin master && git rebase origin/master   # 或 git merge origin/mas
 - **0.2.0 已上游修复、相应本地补丁退役**：dsh-client-patches 0001（Firefox
   `hasIntrinsicConstructor` 兼容）——0.2.0 改为双侧 `Function.prototype.toString.call(...)`
   比较，SpiderMonkey 格式天然通过；实测安装版 client.js 与纯净 tarball 逐字节一致。
+
+## 2026-10-14 新增第 7 个补丁器：`ensure-tooljsonrepair-patch.mjs`
+
+**病**：模型偶发漏转义内层引号（`{"command":"echo "hi""}`），`translate()` 在 `content_block_stop`
+把 `block.json` 原样收进 `arguments`，`message_stop` 对每个 tool-call 逐个 `JSON.parse`，
+失败即 `malformed("tool input is invalid JSON")` ⇒ `MALFORMED_RESPONSE`，**整个 turn 判死**。
+0.1.5 的主循环 `parseArguments` 容忍非法 JSON（catch 透传原文 → 工具报错 → 模型自纠），
+1.7 起的 Messages 适配器在 message_stop **抢先预校验** ⇒ 行为回归。
+宿主全史实测 39 / 139,329 次工具调用 ≈ 1/3500（`.compat/scan-bad-args.mjs`），单次即打断会话。
+
+**为什么必须在收口处修**：下游 `dsh-llm` 的 `BlockAssembler.push` 遇 `block-end` 直接
+`partial.block = chunk.block`（快照优先于逐片累积的 `toolCallArguments`）——
+交付给工具的字符串在 `content_block_stop` 那一刻就定型了，在 `message_stop` 处再改已经晚了。
+
+**修复的收窄口径**（宁可整轮失败，绝不把猜出来的参数交给工具）：
+- 只在 V8 报 `Expected ',' or '}' after property value in JSON at position N` 时动手。
+  **数组**漏逗号报的是 `after array element`，类别不同 ⇒ 天然被排除
+  （否则 `["a" "b"]` 会被悄悄并成一个元素）。
+- 报错位置是引号时，只在这条引号**连闭合引号都没有**（不可能当新成员键）时才断定
+  「前面的引号才是漏转义的那个」；有闭合引号即语义不明（漏逗号/漏冒号都可能）⇒ 不猜。
+- 候选引号必须未被转义（前面反斜杠个数为偶）；最多 8 轮；任一条不满足即原样返回。
+- 原样返回 ⇒ 下游照旧 `MALFORMED_RESPONSE`，由 provider `retryPolicy` 兜底重发
+  （`retryableCodes` 需含 `MALFORMED_RESPONSE`，prod 档 maxRetries: 8）。
+
+**验收（三层，全部可重跑）**，脚本在 `dsh-plugins/.scratch/invalidjson/`：
+1. 配置级 `verify-config-accept.mjs` 16/16：直接读 `~/.dsh/profiles/web/cordis.patch.yml` 真文件，
+   喂进安装树真实的 `Config → plainOptions → resolveRetryPolicy` 三段链；负面（未知 mode /
+   未知 key / 重复码 / 空码表 / initial>max）全被拒，证明闸门非空转。
+2. 算法级 `test-repair-algorithm.mjs` 22/22：从**打过补丁的真实文件**里抽函数逐案跑
+   （5 个正面修成模型本意；11 个负面——合法 JSON / 漏逗号 / 漏冒号 / 数组漏逗号 / 尾逗号 /
+   多花括号 / 截断 / 未闭合字符串——全部逐字节原样返回，一个都没偷偷修）。
+3. 端到端 `test-adapter-e2e.mjs` 16/16：自签 TLS 本地服务发真 SSE 流，
+   真 `DeepSeekAdapter.stream()` 跑完 parseSse → translate → 收口。
+   同一份用例对**上游原文件**再跑一次做对照：原文件 canonical 案判死
+   `MALFORMED_RESPONSE`，补丁后修成 `{"command":"echo \"hi\""}` 且不抛；
+   合法入参两侧都逐字节恒等；结构病两侧都判死且吐出的仍是原文。
+
+**升级演练（照 README「升级 dsh 之后」做）**：把纯净 `.bak-*` 拷回覆盖 ⇒ `--check` 报 MISSING(1)
+⇒ `bash apply-all.sh` 七项全 OK ⇒ `--check` 0，三层验收重跑全绿。即 npm 升级覆盖补丁后，
+启动前 `ExecStartPre` 会自动重打，无需人工。
+
+**遗留**：上游源码同构病仍在 `packages/llm/llm-deepseek/src/translate.ts`（message_stop 的
+`JSON.parse(content.arguments)` 预校验）——本补丁只覆盖安装树产物；若要走上游通道，
+可照 quotamisclass 的先例提 Discussion。
