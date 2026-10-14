@@ -62,6 +62,15 @@ function barePackageName(specifier: string): string | undefined {
 function identityFromManifest(path: string, allowAnonymous: boolean): DeepSeekPluginPackageIdentity | undefined {
   const manifest = JSON.parse(readFileSync(path, 'utf8')) as PackageManifest
   if (allowAnonymous && manifest.name === undefined) return undefined
+  // [local] initProfile 创建的 profile manifest 只有 name 没有 version；原实现在此抛错，
+  // 与 profile 目录里合法的相对 .mjs 行叠加 → 每轮请求 REQUEST_EXTENSION 失败。
+  // 匿名(非 bare package)路径下 version 缺失降级为 "0.0.0"；bare package 路径保持严格。
+  if (allowAnonymous && (manifest.version === undefined || manifest.version === '')) {
+    if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
+      throw new Error(`plugin-package-inventory-deepseek: ${path} must declare non-empty name and version`)
+    }
+    return { name: manifest.name, version: '0.0.0' }
+  }
   if (typeof manifest.name !== 'string' || manifest.name.length === 0
     || typeof manifest.version !== 'string' || manifest.version.length === 0) {
     throw new Error(`plugin-package-inventory-deepseek: ${path} must declare non-empty name and version`)

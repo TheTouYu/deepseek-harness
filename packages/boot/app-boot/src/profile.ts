@@ -248,8 +248,11 @@ export function initProfile(
   mkdirSync(dir, { recursive: true })
   const manifestPath = join(dir, 'package.json')
   if (!existsSync(manifestPath)) {
-    const manifest: ProfileManifest & { private: boolean } = {
+    const manifest: ProfileManifest & { private: boolean; version: string } = {
       name: `dsh-profile-${basename(dir)}`,
+      // [local] identityFromManifest 要求 name+version 双非空；缺 version 的 profile
+      // 一旦挂相对 .mjs 行即全实例请求失败（REQUEST_EXTENSION）。
+      version: '0.0.0',
       private: true,
       dependencies: {},
       dsh: { profile: { bundles: [...bundles] } },
