@@ -32,9 +32,13 @@ cd "$REPO" || exit 2
     exit 1
   fi
   echo "--- 补丁器干跑（--check）---"
-  for f in local/patches/ensure-*.mjs; do
-    /usr/bin/node "$f" --check >/dev/null 2>&1 && echo "OK    $f" || echo "RED($?) $f — 锚点漂移，需适配"
+  shopt -s nullglob
+  patches=(local/patches/ensure-*.mjs)
+  if [ ${#patches[@]} -eq 0 ]; then echo "WARN: local/patches/ensure-*.mjs 未展开（目录缺失？）"; fi
+  for f in "${patches[@]}"; do
+    if /usr/bin/node "$f" --check >/dev/null 2>&1; then echo "OK    $f"; else echo "RED($?) $f — 锚点漂移，需适配"; fi
   done
+  shopt -u nullglob
   git checkout -q master
   echo "branch local/auto-merge-upstream 已就绪，人工验证后 fast-forward master 并 push fork"
 } >> "$LOG" 2>&1
