@@ -1,4 +1,8 @@
-# local/patches/ —— 本机 dsh 本地补丁器（7 个）
+# local/patches/ —— 本机 dsh 本地补丁器（本目录 8 个 `.mjs` + 1 个外挂守卫 = 9 条接线）
+
+> 台账序列号（下表的 #）按**接线引入顺序**编号，因此含外挂的 `ensure-profile-version.mjs`（#6）；
+> 目录里的 `.mjs` 现有 8 个（#5 `plugin-identity`、#7 `tooljsonrepair`、#8 `contextrow`、
+> #9 `identity-dedup` 是后加的，其中 #5/#6 只在下面「升级到 0.2.0-rc.2」一节有文字记录）。
 
 > 这一批补丁原住在 `dsh-routing-suite`（已弃用）。现在**就住在本 fork**（`TheTouYu/deepseek-harness`）的 `local/patches/`，
 > 与官方树同仓、随分支一起推送 —— 不再需要一个单独的补丁仓库。
@@ -20,6 +24,7 @@
 | 4 | `ensure-resume-cooldown-patch.mjs` | `dsh-api-session-controller` | 预设挂载失败 ⇒ 该会话 resume 必失败，而 `resumeObserved` **先 `composeAgent` 再 `agents.resume`**、失败即释放去重槽位 ⇒ 客户端无退避重试的每一次都要重挂整套组合（实测 80 req/s × 0.47s CPU = 空闲实例 **825.1s/805s = 102.5%** 一核 13 分钟，日志零行）。加 `RESUME_FAILURE_COOLDOWN_MS = 1000` 失败闸门 + 失败赋名 | 行为签名 + **真 `import()`** | `.bak-resumecool-*`；原始件 `.bak-20260914-storm`；手工版 `.bak-handpatched-20260914` |
 | 7 | `ensure-tooljsonrepair-patch.mjs` | `dsh-llm-deepseek` | 模型漏转义内层引号（`{"command":"echo "hi""}`）⇒ `content_block_stop` 收口把非法 JSON 交付给工具、`message_stop` 预校验抛 `MALFORMED_RESPONSE` **判死整个 turn**（0.1.5 是容忍原文让模型自纠，属行为回归；宿主全史 39/139,329 ≈ 1/3500）。收口处改调**收窄的错误位置驱动修复器**：只在 V8 报 "Expected ',' or '}' after property value" 时转义候选引号，最多 8 轮，其余一律原样放行交给 retryPolicy | marker + 两个注入点都在位 | `.bak-tooljsonrepair-*` |
 | 8 | `ensure-contextrow-visible-patch.mjs` | `dsh-client-ui-chat` | 对话视图**看不到任何注入的上下文消息**（记忆召回、指令更新、skill/插件注入、压缩提醒），必须切「轨迹」才看得到。根因：`isVisibleChatNode` 把整类 `context` 节点剔除（只给 tool-addition/removal 例外），而注入消息在 chat 侧一律建 `context` 节点、只有「开启回合」的才升级成可见的 `turn-trigger`；实测注入落在**回合内步骤边界** ⇒ 永远被剔除。删掉该支，恢复 0.1.7 前行为（system-prompt / permission 仍隐藏） | marker（`// ponytail: context-rows-visible`） | `.bak-contextrow-*` ×2 |
+| 9 | `ensure-identity-dedup-patch.mjs` | `dsh-web-app` | persona 里与宿主 `harness:identity` **重复的第二句身份**（`You are a coding agent powered by the {{model}} model.`，用户 2026-10-14 裁决删除）。4 处（根 `cordis.patch.yml` 的 `system-prompt.personaPrefix` + 3 个 presets 的 `persona.prefix`，两种 YAML 标量形态）一律改空串；persona `suffix`（cwd 行）不动 | 该键解析为空串 + `# ponytail: persona-identity-dedup` 注释（三态见下文，另验 `verify/identity-dedup/test-identity-dedup.mjs`） | 无（纯配置行，回滚 = 还原该行 / 重装该包） |
 
 ## 接线（`~/.config/systemd/user/dsh-web.service`）
 
@@ -35,7 +40,7 @@ ExecStartPre=/bin/bash -c 'f=/home/h/app/deepseek-harness/local/patches/ensure-c
 巡检（0=健康 / 1=需重打）：
 
 ```bash
-for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-tooljsonrepair ensure-contextrow; do
+for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-plugin-identity ensure-tooljsonrepair ensure-contextrow ensure-identity-dedup; do
   node /home/h/app/deepseek-harness/local/patches/$s-patch.mjs --check; echo "$s exit=$?"
 done
 ```
@@ -55,7 +60,7 @@ done
 ## 升级 dsh 之后要做什么
 
 1. `npm i -g @deepseek-ai/dsh@<新版本>`（注意：`latest` 标签可能比 `next` 旧，别把小版本装回去）。
-2. 重启 `dsh-web.service` —— 八个补丁器会在启动前自动重打；用上面的巡检确认全绿。
+2. 重启 `dsh-web.service` —— 九个补丁器（`apply-all.sh` 列表）会在启动前自动重打；用上面的巡检确认全绿。
 3. 某个补丁器报 `STALE`（锚点找不到）时：**先人工核对上游是否已自行修复**——
    已修复就摘掉该 `ExecStartPre` 并删脚本；未修复再按新布局更新锚点（脚本里的 `old`/`new` 是自解释的）。
 4. unit 备份：`~/.config/systemd/user/dsh-web.service.bak-20260914-patchwiring`（首次接线）、
@@ -238,3 +243,54 @@ triggers」（lsdsjy，2026-09-17 提交 / 09-18 合入）**新建**，初版就
    + `memo-river` 三条注入），正文长度 4070 → 4164。
 
 **升级演练**：还原纯净产物 → `--check` 1 → `apply-all.sh` 八项 OK → `--check` 0 → 浏览器复验仍 3 行。
+
+## 2026-10-15 新增 `ensure-identity-dedup-patch.mjs`（本目录第 8 个 / 台账序列 #9）
+
+**病（用户 2026-10-14 裁决）**：宿主 `harness:identity` 已经给出身份行（"You are an AI agent
+powered by DeepSeek Harness"），`dsh-web-app` 的 patch 配置又往 persona 追加一句同义身份
+`You are a coding agent powered by the {{model}} model.` —— 两句重复，后一句冗余，删。
+该句同族共 8 个位点（记忆河 D136）：river-acp / river-acp-dev 的 `compose.source.json` +
+`cordis.patch.yml` 4 处、memo-river bundle 1 处、**上游包 `dsh-web-app` 4 处**；本补丁器只覆盖后者
+（其余位点当晚已手改，`grep -c` 复核 0 命中——但它们**没有补丁器**，见文末遗留）。
+
+**落点（4 处，两种 YAML 标量形态；键路径是解析后实测，不是猜的）**：
+
+| 文件 | 键路径 | 上游形态 | 改后 |
+|---|---|---|---|
+| `cordis.patch.yml` | `$[0].config.personaPrefix` | `>-` 块标量两行 | `personaPrefix: ''` |
+| `presets/cordis.patch.yml` | `$[0].insert[0].config.plugins[0].config.prefix` | `>-` 块标量两行 | `prefix: ''` |
+| `presets/ptc.patch.yml` | 同上 | 单行标量 | `prefix: ''` |
+| `presets/standard.patch.yml` | 同上 | 单行标量 | `prefix: ''` |
+
+persona 的 `suffix`（`Your working directory is {{cwd}}.`）与其余 30+ 个 plugin 行不受影响。
+锚点/替换串**逐字节取自 0.2.0-rc.2 的 npm tarball**（从 `~/.npm/_cacache` 还原的纯净件，
+`sha512-pCIMPLfTKVfY942dP4eJSDVw7iUw86pemzfOr/e5DWP7CdCKTfvA82kP0RJAKJcyKJd8s679hqtCue/p4P20Dg==`）
+——不凭记忆写锚点，这是本类配置补丁最容易翻车的地方（D136 记过：同一份配置里 `\n` 转义的双引号形态
+与单引号裸串形态并存，必须按形态分别锚定）。
+
+**状态语义**（`--check` 只诊断、绝不写盘）——比老补丁器多一档 **SKIP**，因为这里「站点整块消失」
+是**可能合法**的上游变化（上游自己删掉 persona prefix 也等于达成目的）：
+
+| 态 | 判据 | 退出码 |
+|---|---|---|
+| OK | 该键的值已是空串（`''` / `""` 都认） | 0 |
+| MISSING | 锚点命中（= 上游原样） | 1（非 `--check` 时执行替换，并在键上方插一行 `# ponytail: persona-identity-dedup` 注释） |
+| STALE | 键还在但值非空、锚点未命中（上游改写了那句身份句） | 1 |
+| SKIP | 该键整块不存在 | 1（警告：人工确认后可摘掉本条） |
+| — | 目标文件不存在（目录布局变了） | 2 |
+
+**验收（可重跑，不碰真实安装树）**：
+`node /home/h/deepseek-harness/local/patches/verify/identity-dedup/test-identity-dedup.mjs` —— 23 项全绿：
+
+- A 真实安装树 `--check` = 0（四处全 OK）；
+- B 正向 A/B：拿**纯净 tarball 原样**铺进 mock 安装根（脚本支持 `--root`）⇒ `--check` MISSING×4 / exit 1
+  ⇒ apply 后 OK×4；apply 产物与真实安装树 **YAML 语义逐键相等**（`yaml` + `js-yaml` 两个独立解析器都验），
+  且**去掉 marker 注释行后逐字节相等**（证明补丁没碰别的字节）；
+- C STALE（改写身份句）/ D SKIP（整块删掉）都 exit 1 且不写盘；E 目标不存在 = exit 2；F 连打两次不写盘。
+
+**为什么不做备份文件**：改的是一行配置值（`>-` 两行 → 空串一行），`.bak-*` 只会污染包目录；
+回滚 = 重装该包或还原该行。
+
+**遗留（不在本补丁器范围）**：`~/.dsh/preset-bundles/{river-acp,river-acp-dev,qxqy-river}/` 里的
+4 个身份句位点没有补丁器覆盖（当前已手改为 0 命中）——预设 bundle 重建/迁移时会静默回来；
+memo-river bundle 那处在仓里（`dsh-memo-river/bundle/`，且安装侧是指向仓源的符号链接），随 git 走。
