@@ -1,0 +1,17 @@
+This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.
+
+Context breakdown: 43.9K tool | 6.5K code | 12.9K text
++117.7K since last nudge
+
+Surface: 180 nodes, seqs 9..528
+Compressible ranges (6, oldest first; exact surface seqs — usable as-is):
+  - seq 10..10 — 1 messages, ~947 tokens [tool 0% | text 100%]
+  - seq 12..12 — 1 messages, ~185 tokens [tool 0% | text 100%]
+  - seq 34..184 — 59 messages, ~9612 tokens [tool 100% | text 0%]
+  - seq 187..248 — 21 messages, ~12210 tokens [tool 86% | text 14%]
+  - seq 253..272 — 9 messages, ~2194 tokens [tool 67% | text 33%]
+  - seq 280..371 — 33 messages, ~6027 tokens [tool 91% | text 9%]
+Compress with: compress({ content: [{ startSeq, endSeq, summary }] }) — content is an array: batch multiple unrelated segments in one call, each entry its own block. Keep ranges disjoint.
+Snapshot taken at nudge time: the seqs go stale once the surface moves (a later compress shadows them), so re-run acp_status for fresh refs before compressing.
+
+💡 Compress all ranges in one call (pass multiple content entries: `content: [{...}, {...}]`).
