@@ -46,7 +46,7 @@ const args = process.argv.slice(2)
 const checkOnly = args.includes('--check')
 const targetFlag = args.indexOf('--target')
 const TARGET = targetFlag >= 0 ? args[targetFlag + 1]
-  : `${process.env.HOME}/.npm-dlabal/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js`
+  : `${process.env.DSH_INSTALL_ROOT ?? `${process.env.HOME}/.local/lib/node_modules`}/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js`
 
 const MARKER = '// ponytail: keep-alive pool reuse fix. v3'
 const LEGACY_MARKER = '// ponytail: keep-alive pool reuse fix.'

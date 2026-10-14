@@ -120,3 +120,27 @@ git fetch origin master && git rebase origin/master   # 或 git merge origin/mas
 
 上游 PR 分支 `fix/resume-failure-cooldown`（resume 闸门的平台侧修复）是另一条线，
 因官方不接受外部 PR，改以 Discussion #6622 报出：<https://github.com/deepseek-ai/deepseek-harness/discussions/6622>
+
+## 2026-10-14 升级到 0.2.0-rc.2 + 安装根迁移 + 新增第 5/6 补丁器
+
+- **安装根迁移**：全局 dsh 从 `~/.npm-dlabal/lib/node_modules` 迁到
+  `~/.local/lib/node_modules` 后，四个老补丁器的硬编码路径全体失联
+  （既没接线也没生效，静默失效多时）。本日改为自适应：
+  `$DSH_INSTALL_ROOT` 优先，缺省 `~/.local/lib/node_modules`；个别脚本支持 `--root`/`--target`。
+- **上游 dsh-v0.2.0-rc.2 已合并进本 fork master**（merge commit 4e238def86）。
+  四个老补丁器在 0.2.0 上重新干跑：全部 MISSING（上游一个都没修），apply 后全绿。
+  v0-tier-compat 的探针在 0.2.0 上实测复现 `SessionFormatError: ... member "tier"`——542 个 v0 会话打不开的病还在。
+  唯一例外：quotamisclass 的 dsh-llm-deepseek 侧分类点（`function httpErrorCode(`）在 0.2.0
+  已不存在（协议改 Messages），该锚点 skip 不算红；dsh-llm-pi-ai 侧仍在打。
+- **新增 `ensure-plugin-identity-patch.mjs`（第 5 个）**：app-boot `initProfile` 生成的
+  profile package.json 只有 name 没 version，而 plugin-package-inventory-deepseek 的
+  `identityFromManifest` 要求双非空并抛错 → profile 挂相对 `.mjs` 行时每轮请求
+  REQUEST_EXTENSION 全炸（2026-10-14 生产事故）。补丁 = 匿名路径 version 缺失降级
+  "0.0.0" + initProfile 模板补 version。fork 源码同构修复在 816e974451。
+- **第 6 个防线**：`ensure-profile-version.mjs`（位于 dsh-plugins/dsh-preset-composer/scripts/）
+  扫 `~/.dsh/profiles/*/package.json` 自动补 version——防宿主/插件管理器再次重写丢字段。
+- **接线统一**：`~/.config/systemd/user/dsh-web.service.d/local-patches.conf` 的
+  ExecStartPre 调 `apply-all.sh`（本目录，逐个跑、缺席目标 exit 2 不阻断启动——可用性优先）。
+- **0.2.0 已上游修复、相应本地补丁退役**：dsh-client-patches 0001（Firefox
+  `hasIntrinsicConstructor` 兼容）——0.2.0 改为双侧 `Function.prototype.toString.call(...)`
+  比较，SpiderMonkey 格式天然通过；实测安装版 client.js 与纯净 tarball 逐字节一致。

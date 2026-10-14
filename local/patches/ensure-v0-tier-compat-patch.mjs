@@ -43,7 +43,7 @@ import { join } from 'node:path'
 
 const checkOnly = process.argv.slice(2).includes('--check')
 const HOME = process.env.HOME
-const FILE = `${HOME}/.npm-dlabal/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-format-v0-to-v1/lib/index.js`
+const FILE = `${process.env.DSH_INSTALL_ROOT ?? `${HOME}/.local/lib/node_modules`}/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-format-v0-to-v1/lib/index.js`
 
 // 原样锚点：compaction/summary 的冻结成员清单（升级后重新下载的原始形态）。
 const OLD = `\t"compaction/summary": disposition([

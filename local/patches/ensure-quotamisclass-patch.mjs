@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process'
 const args = process.argv.slice(2)
 const checkOnly = args.includes('--check')
 const HOME = process.env.HOME
-const base = `${HOME}/.npm-dlabal/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai`
+const base = `${process.env.DSH_INSTALL_ROOT ?? `${HOME}/.local/lib/node_modules`}/@deepseek-ai/dsh/node_modules/@deepseek-ai`
 
 const MARKER = '// ponytail: billing/quota 403s'
 

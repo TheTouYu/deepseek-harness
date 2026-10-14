@@ -45,7 +45,7 @@ const targetFlag = args.indexOf('--target')
 const HOME = process.env.HOME
 
 const TARGET = targetFlag >= 0 ? args[targetFlag + 1]
-  : `${HOME}/.npm-dlabal/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js`
+  : `${process.env.DSH_INSTALL_ROOT ?? `${HOME}/.local/lib/node_modules`}/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js`
 
 /** 本补丁器的标记（只用于标识"是这份脚本打的"；健康判定不依赖它）。 */
 const MARKER = '// ponytail: resume-failure cooldown'
