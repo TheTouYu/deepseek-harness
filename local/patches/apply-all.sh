@@ -15,6 +15,7 @@ for p in \
   ensure-resume-cooldown-patch.mjs \
   ensure-plugin-identity-patch.mjs \
   ensure-tooljsonrepair-patch.mjs \
+  ensure-contextrow-visible-patch.mjs \
   /home/h/dsh-plugins/dsh-preset-composer/scripts/ensure-profile-version.mjs
 do
   name=$(basename "$p")

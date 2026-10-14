@@ -19,6 +19,7 @@
 | 3 | `ensure-v0-tier-compat-patch.mjs` | `dsh-session-format-v0-to-v1` | v0→v1 迁移器用**冻结的已发布成员清单**严格校验 `compaction/summary`，而本机历史会话由带 ACP（billion-context-dsh）的构建写入、多带 7 个成员（tier/kernelBlockId/topic/parentBlockIds/directMessageIds/effectiveMessageIds/verifiedReadings）⇒ **542 个 v0 会话全部打不开**。必须补进**第二个参数 optional**（第三个 opaque 不授予成员资格；试错产物留作 `.reference-wrong-slot-opaque-*`） | 跑**真校验器探针**，不看 marker | `.bak-v0tier-*` ×2、`.bak-wave2-*` |
 | 4 | `ensure-resume-cooldown-patch.mjs` | `dsh-api-session-controller` | 预设挂载失败 ⇒ 该会话 resume 必失败，而 `resumeObserved` **先 `composeAgent` 再 `agents.resume`**、失败即释放去重槽位 ⇒ 客户端无退避重试的每一次都要重挂整套组合（实测 80 req/s × 0.47s CPU = 空闲实例 **825.1s/805s = 102.5%** 一核 13 分钟，日志零行）。加 `RESUME_FAILURE_COOLDOWN_MS = 1000` 失败闸门 + 失败赋名 | 行为签名 + **真 `import()`** | `.bak-resumecool-*`；原始件 `.bak-20260914-storm`；手工版 `.bak-handpatched-20260914` |
 | 7 | `ensure-tooljsonrepair-patch.mjs` | `dsh-llm-deepseek` | 模型漏转义内层引号（`{"command":"echo "hi""}`）⇒ `content_block_stop` 收口把非法 JSON 交付给工具、`message_stop` 预校验抛 `MALFORMED_RESPONSE` **判死整个 turn**（0.1.5 是容忍原文让模型自纠，属行为回归；宿主全史 39/139,329 ≈ 1/3500）。收口处改调**收窄的错误位置驱动修复器**：只在 V8 报 "Expected ',' or '}' after property value" 时转义候选引号，最多 8 轮，其余一律原样放行交给 retryPolicy | marker + 两个注入点都在位 | `.bak-tooljsonrepair-*` |
+| 8 | `ensure-contextrow-visible-patch.mjs` | `dsh-client-ui-chat` | 对话视图**看不到任何注入的上下文消息**（记忆召回、指令更新、skill/插件注入、压缩提醒），必须切「轨迹」才看得到。根因：`isVisibleChatNode` 把整类 `context` 节点剔除（只给 tool-addition/removal 例外），而注入消息在 chat 侧一律建 `context` 节点、只有「开启回合」的才升级成可见的 `turn-trigger`；实测注入落在**回合内步骤边界** ⇒ 永远被剔除。删掉该支，恢复 0.1.7 前行为（system-prompt / permission 仍隐藏） | marker（`// ponytail: context-rows-visible`） | `.bak-contextrow-*` ×2 |
 
 ## 接线（`~/.config/systemd/user/dsh-web.service`）
 
@@ -34,7 +35,7 @@ ExecStartPre=/bin/bash -c 'f=/home/h/app/deepseek-harness/local/patches/ensure-c
 巡检（0=健康 / 1=需重打）：
 
 ```bash
-for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-tooljsonrepair; do
+for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-tooljsonrepair ensure-contextrow; do
   node /home/h/app/deepseek-harness/local/patches/$s-patch.mjs --check; echo "$s exit=$?"
 done
 ```
@@ -54,7 +55,7 @@ done
 ## 升级 dsh 之后要做什么
 
 1. `npm i -g @deepseek-ai/dsh@<新版本>`（注意：`latest` 标签可能比 `next` 旧，别把小版本装回去）。
-2. 重启 `dsh-web.service` —— 四个补丁器会在启动前自动重打；用上面的巡检确认全绿。
+2. 重启 `dsh-web.service` —— 八个补丁器会在启动前自动重打；用上面的巡检确认全绿。
 3. 某个补丁器报 `STALE`（锚点找不到）时：**先人工核对上游是否已自行修复**——
    已修复就摘掉该 `ExecStartPre` 并删脚本；未修复再按新布局更新锚点（脚本里的 `old`/`new` 是自解释的）。
 4. unit 备份：`~/.config/systemd/user/dsh-web.service.bak-20260914-patchwiring`（首次接线）、
@@ -189,3 +190,51 @@ git fetch origin master && git rebase origin/master   # 或 git merge origin/mas
 **遗留**：上游源码同构病仍在 `packages/llm/llm-deepseek/src/translate.ts`（message_stop 的
 `JSON.parse(content.arguments)` 预校验）——本补丁只覆盖安装树产物；若要走上游通道，
 可照 quotamisclass 的先例提 Discussion。
+
+## 2026-10-15 新增第 8 个补丁器：`ensure-contextrow-visible-patch.mjs`
+
+**症状（用户报）**：浏览器对话视图里看不到自动注入的上下文消息——自动召回的记忆横幅、AGENTS.md
+指令更新、skill/插件注入、压缩提醒全都不见了；点「轨迹」视图才能看到全部消息。
+
+**根因（源码 `packages/client/ui-chat/src/client/contract/chat-visibility.ts`）**：
+`isVisibleChatNode(node)` 把整类 `context` 节点从 chat 行剔除，只给
+`tool-addition`/`tool-removal` 开了例外：
+
+```ts
+return node.visibility === 'visible'
+  && node.kind !== 'system-prompt'
+  && (node.kind !== 'context'
+    || node.data.content.some(b => b.type === 'tool-addition' || b.type === 'tool-removal'))
+  && !(node.kind === 'command' && node.data.name === 'permission')
+```
+
+上游本身是自洽的：`conversation-nodes/message.ts` 对 `source.kind !== 'user'` 的消息一律建
+`kind:'context'` 节点（`visibility` 默认 `'visible'`，没有第二道闸），只有「被 next-turn 认领、
+**开启**回合」的那类会被 `buildViewNode` 升级成 `turn-trigger`（可见）。但实测注入位置是
+**回合内的步骤边界**——`tool/result → step/end → step/start(1/N) → user/message(memo-river)`，
+不是回合起点 ⇒ `waking=false` ⇒ 永远被剔除。四个消费点全在 chat 侧：
+`chat-snapshot-builder` / `turn-navigation` / `turn-process-presentation` / `process-groups`；
+**轨迹视图 `ui-trajectory` 是独立投影，不引用该判据**，这解释了「轨迹里全有」。
+
+**回归点**：该文件由上游 `776efdf321`「fix(ui-chat): hide infrastructure rows and retain turn
+triggers」（lsdsjy，2026-09-17 提交 / 09-18 合入）**新建**，初版就写死 `node.kind !== 'context'`；
+`7e5f906945`（09-21）只加了 tool 变更例外。此后（含 `rel/dsh-0.1.7-rc.2` 合并点 `477b4f4205`）
+上游**再无改动、未修**。
+
+**修法（2026-10-15 用户选定 A 案）**：删掉 `context` 那一支，恢复 0.1.7 之前的可见行为；
+`system-prompt` 行与 `permission` 命令仍隐藏。依据：契约层 `context-producer.ts` 明确要求
+「本 UI 不认识的 producer 也要保持可见」（opaque 兜底已实现），可见性闸门却把整类节点丢掉——
+本补丁让两层语义重新一致。落点是客户端产物
+`dsh-client-ui-chat/lib/client.js:7718`（单行判据，全安装树唯一副本）+ 同步 `.d.ts` 文档注释。
+
+**验收（四层，全绿）**：
+1. 静态：`node --check` 过；marker 各 1；`diff -u` 对备份 = 1 行换 3 行（1 删 1 改 + 2 行注释）。
+2. 幂等：`--check` 前 1（MISSING）→ 打完 0；`apply-all.sh` 八项全 OK。
+3. 判据级 A/B（`local/patches/verify/contextrow/test-visible.mjs`，**从补丁后的真实字节里抽出函数执行**，
+   喂真实会话数据造的节点）：9/9 PASS；行为变化恰好 2 项——记忆召回与指令更新由「隐藏」转「可见」
+   （tool 变更本来就是例外，system-prompt / permission / 显式 `visibility:'hidden'` 仍隐藏）。
+4. 浏览器级 A/B（沙箱 3105 + chromedriver，**同一会话、同一沙箱，只换安装树产物**）：
+   纯净 0 行「上下文注入」/ 补丁 3 行（正好对应会话里的 `agent-instructions` + `runtime-context`
+   + `memo-river` 三条注入），正文长度 4070 → 4164。
+
+**升级演练**：还原纯净产物 → `--check` 1 → `apply-all.sh` 八项 OK → `--check` 0 → 浏览器复验仍 3 行。
