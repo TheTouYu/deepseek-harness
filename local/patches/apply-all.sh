@@ -17,6 +17,7 @@ for p in \
   ensure-tooljsonrepair-patch.mjs \
   ensure-contextrow-visible-patch.mjs \
   ensure-identity-dedup-patch.mjs \
+  ensure-sendmessage-disambiguation-patch.mjs \
   /home/h/dsh-plugins/dsh-preset-composer/scripts/ensure-profile-version.mjs
 do
   name=$(basename "$p")

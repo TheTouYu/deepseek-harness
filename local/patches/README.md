@@ -1,8 +1,8 @@
-# local/patches/ —— 本机 dsh 本地补丁器（本目录 8 个 `.mjs` + 1 个外挂守卫 = 9 条接线）
+# local/patches/ —— 本机 dsh 本地补丁器（本目录 9 个 `.mjs` + 1 个外挂守卫 = 10 条接线）
 
 > 台账序列号（下表的 #）按**接线引入顺序**编号，因此含外挂的 `ensure-profile-version.mjs`（#6）；
-> 目录里的 `.mjs` 现有 8 个（#5 `plugin-identity`、#7 `tooljsonrepair`、#8 `contextrow`、
-> #9 `identity-dedup` 是后加的，其中 #5/#6 只在下面「升级到 0.2.0-rc.2」一节有文字记录）。
+> 目录里的 `.mjs` 现有 9 个（#5 `plugin-identity`、#7 `tooljsonrepair`、#8 `contextrow`、
+> #9 `identity-dedup`、#10 `sendmessage-disambiguation` 是后加的，其中 #5/#6 只在下面「升级到 0.2.0-rc.2」一节有文字记录）。
 
 > 这一批补丁原住在 `dsh-routing-suite`（已弃用）。现在**就住在本 fork**（`TheTouYu/deepseek-harness`）的 `local/patches/`，
 > 与官方树同仓、随分支一起推送 —— 不再需要一个单独的补丁仓库。
@@ -25,6 +25,7 @@
 | 7 | `ensure-tooljsonrepair-patch.mjs` | `dsh-llm-deepseek` | 模型漏转义内层引号（`{"command":"echo "hi""}`）⇒ `content_block_stop` 收口把非法 JSON 交付给工具、`message_stop` 预校验抛 `MALFORMED_RESPONSE` **判死整个 turn**（0.1.5 是容忍原文让模型自纠，属行为回归；宿主全史 39/139,329 ≈ 1/3500）。收口处改调**收窄的错误位置驱动修复器**：只在 V8 报 "Expected ',' or '}' after property value" 时转义候选引号，最多 8 轮，其余一律原样放行交给 retryPolicy | marker + 两个注入点都在位 | `.bak-tooljsonrepair-*` |
 | 8 | `ensure-contextrow-visible-patch.mjs` | `dsh-client-ui-chat` | 对话视图**看不到任何注入的上下文消息**（记忆召回、指令更新、skill/插件注入、压缩提醒），必须切「轨迹」才看得到。根因：`isVisibleChatNode` 把整类 `context` 节点剔除（只给 tool-addition/removal 例外），而注入消息在 chat 侧一律建 `context` 节点、只有「开启回合」的才升级成可见的 `turn-trigger`；实测注入落在**回合内步骤边界** ⇒ 永远被剔除。删掉该支，恢复 0.1.7 前行为（system-prompt / permission 仍隐藏） | marker（`// ponytail: context-rows-visible`） | `.bak-contextrow-*` ×2 |
 | 9 | `ensure-identity-dedup-patch.mjs` | `dsh-web-app` | persona 里与宿主 `harness:identity` **重复的第二句身份**（`You are a coding agent powered by the {{model}} model.`，用户 2026-10-14 裁决删除）。4 处（根 `cordis.patch.yml` 的 `system-prompt.personaPrefix` + 3 个 presets 的 `persona.prefix`，两种 YAML 标量形态）一律改空串；persona `suffix`（cwd 行）不动 | 该键解析为空串 + `# ponytail: persona-identity-dedup` 注释（三态见下文，另验 `verify/identity-dedup/test-identity-dedup.mjs`） | 无（纯配置行，回滚 = 还原该行 / 重装该包） |
+| 10 | `ensure-sendmessage-disambiguation-patch.mjs` | `dsh-tool-subagent-control` + `dsh-tool-subagent` + `dsh-subagent` + `dsh-experimental-agent-team` | **同名双工具遮蔽**：subagent-control 全局版与 agent-team per-agent 版都注册 `send_message`（参数 `agent_id` vs `target`），Team 会话里后者遮蔽前者 ⇒ 模型拿 subagent 的 UUID childId 调用必报 `active teammate "…" not found`（决策模型 Lead 会话实证，D133）。改法：全局版改名 `message_agent` + subagent 续聊承诺/子代理引导文本/按名查找同步改名 + agent-team 版对 UUID target 追加错误引导 | `--check` 9 锚点三态；headless 真会话行为读数 | `.bak-sendmsg-*` ×9 |
 
 ## 接线（`~/.config/systemd/user/dsh-web.service`）
 
@@ -40,7 +41,7 @@ ExecStartPre=/bin/bash -c 'f=/home/h/app/deepseek-harness/local/patches/ensure-c
 巡检（0=健康 / 1=需重打）：
 
 ```bash
-for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-plugin-identity ensure-tooljsonrepair ensure-contextrow ensure-identity-dedup; do
+for s in ensure-connstuck ensure-quotamisclass ensure-v0-tier-compat ensure-resume-cooldown ensure-plugin-identity ensure-tooljsonrepair ensure-contextrow ensure-identity-dedup ensure-sendmessage-disambiguation; do
   node /home/h/app/deepseek-harness/local/patches/$s-patch.mjs --check; echo "$s exit=$?"
 done
 ```
@@ -294,3 +295,22 @@ persona 的 `suffix`（`Your working directory is {{cwd}}.`）与其余 30+ 个 
 **遗留（不在本补丁器范围）**：`~/.dsh/preset-bundles/{river-acp,river-acp-dev,qxqy-river}/` 里的
 4 个身份句位点没有补丁器覆盖（当前已手改为 0 命中）——预设 bundle 重建/迁移时会静默回来；
 memo-river bundle 那处在仓里（`dsh-memo-river/bundle/`，且安装侧是指向仓源的符号链接），随 git 走。
+
+## 2026-10-16 新增 `ensure-sendmessage-disambiguation-patch.mjs`（本目录第 9 个 / 台账序列 #10）
+
+**病（决策模型项目 Lead 会话实证，preset-composer 桶 D133/D134）**：`dsh-tool-subagent-control`
+与 `dsh-experimental-agent-team` 各注册一个 `send_message`（参数 `agent_id` vs `target`）。
+agent-team 版按 per-agent 通道遮蔽全局版后，subagent 工具描述仍承诺「returns a subagent id you
+can continue with send_message」——模型照做必报 `active teammate "<uuid>" not found`。
+
+**改法（4 包 6 文件 9 锚点）**：全局版改名 `message_agent`（含 interrupt_agent 描述同步）；
+subagent 工具续聊承诺、子代理回消息引导文本（bundle+源两份）、运行时按名查找
+`get("send_message")`→`get("message_agent")` 同步改名；agent-team 版 `resolveActiveMember`
+的 UUID 形状 target 追加错误引导「continue a subagent with message_agent({agent_id})」。
+改名顺带修复 Team 会话 guidance 失效（按名查找此前拿到无标记的 agent-team 版）。
+
+**状态语义**：`--check` 0=健康 1=需重打 2=目标异常（巡检口径），退出码判定 CHECK 优先于 anomalies 放行。
+**验收（③级行为读数）**：`dsh headless` 真会话模型自报 `message_agent | agent_id,message`；真建
+continuable 子代理后子会话文件 `message_agent({ agent_id` ×2、旧文本 0 残留。
+**注意**：本补丁器 2026-10-15 曾误落 `~/app/dsh-stack/patches/`（换机安装器，非运行时 home），
+2026-10-16 迁至本目录并接入 apply-all.sh 第 10 项，dsh-stack 侧已 revert。
