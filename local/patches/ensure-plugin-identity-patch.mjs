@@ -67,6 +67,18 @@ function patchFile (path, oldText, newText, label) {
   return 'patched'
 }
 
+// 0.2.1-rc.2（2026-10-17 实测）：上游把 DeepSeekPluginPackageIdentity.version 改为 optional，
+// identityFromManifest 缺 version 时返回 { name } 而不再抛错——两个补丁都不再需要。
+// 判定用上游新实现的特征串（version.trim().length > 0），命中即整脚本按"上游已修"放行。
+const upstreamFixed = existsSync(INVENTORY)
+  && readFileSync(INVENTORY, 'utf8').includes('manifest.version.trim().length > 0')
+if (upstreamFixed) {
+  console.log(check
+    ? 'ensure-plugin-identity-patch: OK — 上游 0.2.1+ 已把 identity.version 改为 optional，补丁退役'
+    : 'ensure-plugin-identity-patch: 上游已修（version optional），跳过施打')
+  process.exit(0)
+}
+
 const a = patchFile(INVENTORY, INV_OLD, INV_NEW, 'identityFromManifest')
 const b = patchFile(APPBOOT, BOOT_OLD, BOOT_NEW, 'initProfile')
 if (!check && a !== 'missing' && b !== 'missing' && process.exitCode === undefined) console.log('ensure-plugin-identity-patch: OK')

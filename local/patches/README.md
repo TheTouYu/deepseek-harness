@@ -314,3 +314,32 @@ subagent 工具续聊承诺、子代理回消息引导文本（bundle+源两份�
 continuable 子代理后子会话文件 `message_agent({ agent_id` ×2、旧文本 0 残留。
 **注意**：本补丁器 2026-10-15 曾误落 `~/app/dsh-stack/patches/`（换机安装器，非运行时 home），
 2026-10-16 迁至本目录并接入 apply-all.sh 第 10 项，dsh-stack 侧已 revert。
+
+## 2026-10-17 上游 dsh-v0.2.1-rc.2 兼容审计（对 npm 安装的 0.2.1 mock 树逐条实测）
+
+**结论**：10 条接线只有 1 条需改锚点（sendmessage），1 条因上游自修而退役（plugin-identity）；
+fork merge 0.2.1-rc.2（687f282e86）只 1 处冲突，已解决（取上游版，撤本地 identity 补丁与 app-boot 的 version 行）。
+
+- **绿（锚点命中，施打后 `--check` 0）**：connstuck / quotamisclass / resume-cooldown / v0-tier-compat /
+  tooljsonrepair / contextrow-visible（改的是 `dsh-client-ui-chat/lib/client.js:8200` 的 `isVisibleChatNode`）/
+  identity-dedup（0.2.1 起 4 处全在 `dsh-bundle-web-app` 的 `cordis.patch.yml` 与 `presets/{cordis,ptc,standard}.patch.yml`）。
+- **退役**：plugin-identity —— 上游把 `DeepSeekPluginPackageIdentity.version` 改为 optional，
+  `identityFromManifest` 缺 version 返回 `{name}` 不再抛错（补丁器已加版本探测：命中
+  `manifest.version.trim().length > 0` 即输出「上游已修」并 exit 0）。
+- **需改（已改，双版本自适应）**：sendmessage-disambiguation —— 0.2.1 把「续聊承诺」句改成
+  `continue a local direct child's conversation later with send_message.`（旧整句消失）；续聊引导的按名查找
+  从单文件 `get("send_message", activation.handle.agent)` 拆成两处 `get("send_message", child)`
+  （`dsh-subagent/lib/index.js` + `lib/types/manager.js`），不同步改会让 `isAdjacentAgentSendMessageTool`
+  找不到定义、续聊引导静默失效；`lib/types/continuation.js` 在 0.2.1 已不存在（标 optional）。
+  补丁器现在按文件内容自动选 0.2.0 / 0.2.1 锚点，对生产 0.2.0 树 `--check` 仍 0（无回归）。
+
+**配套配置面（升级时必须同步改，否则 0.2.1 请求前直接失败）**：0.2.1 注销内置 `{{cwd}}` 变量 →
+persona suffix 里的 `Your working directory is {{cwd}}.` 会抛
+`unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"; registered variables: provider, model`。
+受影响：`~/.dsh/preset-bundles/qxqy-river`、`river-acp-dev`（patch+compose.source 双写）、
+`~/dsh-plugins/dsh-memo-river/bundle/cordis.patch.yml`（后者的 suffix 已清空，随 git 走；前两者待升级批次改）。
+另：tool-subagent 的 `backgroundMode` 键被删——schemastery 放行未知键（不炸载），但语义作废，建议清理。
+
+**验证方式（复用 D46/D48 隔离法）**：`npm i -g --prefix .scratch/upstream021/mock-root @deepseek-ai/dsh@0.2.1-rc.2`
+（613 包，`npm pack` 只有 25KB CLI 壳，别用）；克隆 DSH_HOME 后把 `profiles/**/node_modules` 里指向
+生产安装的 487 个符号链接改指 mock 安装根，3082 起独立实例（env 同生产 + MEMO_NATIVE_KERNEL=reimpl）。

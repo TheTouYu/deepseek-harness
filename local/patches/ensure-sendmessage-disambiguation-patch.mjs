@@ -50,14 +50,17 @@ const TARGETS = [
     label: 'A. 全局版改名 message_agent',
     edits: [
       { from: '\t\tname: "send_message",', to: '\t\tname: "message_agent",' },
-      { from: "You can continue a direct child's conversation later with send_message.", to: "You can continue a direct child's conversation later with message_agent." },
+      // 0.2.0 文案
+      { from: "You can continue a direct child's conversation later with send_message.", to: "You can continue a direct child's conversation later with message_agent.", optional: true },
+      // 0.2.1 文案（subagent-activations 改写）
+      { from: "continue a local direct child's conversation later with send_message.", to: "continue a local direct child's conversation later with message_agent.", optional: true },
     ],
   },
   {
     file: join(PKGS, 'dsh-tool-subagent/lib/index.js'),
     label: 'B1. subagent 工具描述续聊承诺',
     edits: [
-      { from: 'you can continue with `send_message`', to: 'you can continue with `message_agent`' },
+      { from: 'you can continue with `send_message`', to: 'you can continue with `message_agent`', optional: true },
     ],
   },
   {
@@ -65,7 +68,9 @@ const TARGETS = [
     label: 'B2/B3. bundle：引导文本 + 按名查找',
     edits: [
       { from: 'send your result to that agent with send_message({ agent_id: ', to: 'send your result to that agent with message_agent({ agent_id: ' },
-      { from: 'this.ctx.get("tools")?.get("send_message", activation.handle.agent)', to: 'this.ctx.get("tools")?.get("message_agent", activation.handle.agent)' },
+      { from: 'this.ctx.get("tools")?.get("send_message", activation.handle.agent)', to: 'this.ctx.get("tools")?.get("message_agent", activation.handle.agent)', optional: true },
+      // 0.2.1：同样的按名查找，变量名改为 child（manager.ts:461 → 拆包后两处）
+      { from: 'this.ctx.get("tools")?.get("send_message", child)', to: 'this.ctx.get("tools")?.get("message_agent", child)', optional: true },
     ],
   },
   {
@@ -78,8 +83,17 @@ const TARGETS = [
   {
     file: join(PKGS, 'dsh-subagent/lib/types/continuation.js'),
     label: 'B3 源文件：按名查找',
+    optional: true,
     edits: [
       { from: "this.ctx.get('tools')?.get('send_message', activation.handle.agent)", to: "this.ctx.get('tools')?.get('message_agent', activation.handle.agent)" },
+    ],
+  },
+  {
+    file: join(PKGS, 'dsh-subagent/lib/types/manager.js'),
+    label: 'B3-src 按名查找（0.2.1 拆包）',
+    optional: true,
+    edits: [
+      { from: "this.ctx.get('tools')?.get('send_message', child)", to: "this.ctx.get('tools')?.get('message_agent', child)", optional: true },
     ],
   },
   {
@@ -119,6 +133,7 @@ for (const target of TARGETS) {
   try {
     text = readFileSync(target.file, 'utf8');
   } catch {
+    if (target.optional) { console.log(`- [${target.label}] 目标文件不存在（该版本无此文件，跳过）`); continue }
     noteAnomaly(target.label, `目标文件不存在（包未装/改名？）：${target.file}`);
     continue;
   }
@@ -131,6 +146,7 @@ for (const target of TARGETS) {
       continue;
     }
     if (fromCount !== 1) {
+      if (edit.optional && fromCount === 0 && toCount === 0) { console.log(`- [${target.label}] 该版本无此锚点，跳过`); continue }
       noteAnomaly(target.label, `锚点出现 ${fromCount} 次（期望 1）：${edit.from.slice(0, 80)}`);
       continue;
     }
